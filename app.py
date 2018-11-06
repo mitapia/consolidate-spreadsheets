@@ -1,62 +1,69 @@
 import pandas as pd
-import xlrd
-from sqlalchemy import create_engine
 
-# Create DB engine.
-engine = create_engine('sqlite:///testing.db')
+from database import Database
+from file_management import FileManagement
 
-files_dir = './source/'
-Store01_file = '1001-Berry-2018-Inventory-Count.xlsx'
-Store02_file = '1002-Lancaster-2018-Inventory-Count.xlsx'
-Store03_file = '1003-Arlington-2018-Inventory-Count.xlsx'
-# not in used
-# Store04_file = '1004-Jefferson-2018-Inventory-Count.xlsx'
-Store05_file = '1005-HarryHines-2018-Inventory-Count.xlsx'
+"""
+	Final Worksheet columns:
+	Style
+	Color
+	Online_Color
+	Item_Size
+	1090-Warehouse-Qty
+	1001-Berry-Qty
+	1002-Lancaster-Qty
+	1003-Arlington-Qty
+	1004-Jefferson-Qty
+	1005-HarryHines-Qty
 
-final_xls = './QB-MultiStore-2018-Import.xls'
-store_file = './sample.xlsx'
+"""
 
-store_id = 'Qty01'
+file = FileManagement()
+source_directory = file.select_directory()
 
 product_info_headers = ['Style', 'Color', 'Online_Color']
-inventory_df = pd.read_excel('./sample_worksheets/sample.xlsx')
+store_files = {
+	# Name on column	  :  Corresponding filename
+	'1090-Warehouse-Qty'  : '1090-Warehouse-2018-Inventory-Count.xlsx',
+	'1001-Berry-Qty' 	  : '1001-Berry-2018-Inventory-Count.xlsx',
+	'1002-Lancaster-Qty'  : '1002-Lancaster-2018-Inventory-Count.xlsx',
+	'1003-Arlington-Qty'  : '1003-Arlington-2018-Inventory-Count.xlsx',
+	'1004-Jefferson-Qty'  : '1004-Jefferson-2018-Inventory-Count.xlsx',
+	'1005-HarryHines-Qty' : '1005-HarryHines-2018-Inventory-Count.xlsx'
+}
 
-for row in inventory_df.iterrows():
-	product = row[1].dropna()	# Removes empty values
+# be sure main spreadsheet exists
+file.verify_main_exists()
 
-	# loads style info into DataFrame and sets index to 0 so we can join this later
-	prduct_info_df = pd.DataFrame(
-						[product.filter(product_info_headers)]
-					).rename(
-						{row[0]: 0}, axis='index'
-					)
+# create new database tabel to store inventory items
+inventory_db = Database()
 
-	#inv = product.drop(style_).value_counts()
-	product_qty = product.drop(product_info_headers).value_counts()
+for store_id, filename in store_files.items():
 
-	for item in product_qty.items():
-		product_qty_df = pd.DataFrame([item], columns=['Item_Size', store_id])
-		product_df = prduct_info_df.join(product_qty_df)
+	current_file = source_directory.joinpath(filename)
 
-		# check for an existing entrie
-		sql_statement = 'SELECT * FROM inventory'
-						+' WHERE Style='+ product_df.at[0, 'Style']
-						+' AND Online_Color='+ product_df.at[0, 'Online_Color']
-						+' AND Item_Size='+ product_df.at[0, 'Item_Size']
-		# not using EXISTS
-		query_for_existance 	   = pd.read_sql_query(sql_statement, con=engine)
-		number_of_records_returned = len(query_for_existance.index)
+	# check for existane of file
+	if not current_file.is_file():
+		# skip to next look if does not exists
+		print(filename, ' is missing. It will be skipped.')
+		continue
 
-		if number_of_records_returned == 0:
-			product_df.to_sql('inventory', con=engine, if_exists='append', index=False)
-		elif number_of_records_returned == 1:
-			pass
-			# sql = """
-			#     UPDATE inventory AS inv
-			#     SET store_id = 
-			#     FROM temp_table AS t
-			#     WHERE f.id = t.id
-			# """
+	print(store_id, ' file was found and is being processed.')
 
-			# with engine.begin() as conn:     # TRANSACTION
-			#     conn.execute(sql)
+	inventory_df = pd.read_excel(current_file)
+
+	for row in inventory_df.iterrows():
+		product = row[1].dropna()	# Removes empty values
+
+		product_info_s = pd.Series(product.filter(product_info_headers))
+		product_qty = product.drop(product_info_headers).value_counts()
+
+		for item in product_qty.items():
+			product_qty_s = pd.Series(item, index=['Item_Size', store_id])
+			product_s = product_info_s.append(product_qty_s)
+
+			inventory_db.add_product(product_s.to_dict(), store_id)
+
+full_inventory = pd.read_sql_table('inventory', inventory_db.engine)
+file.export_to_excel(full_inventory)
+file.archive_files()
